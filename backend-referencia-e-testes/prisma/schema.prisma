@@ -1,0 +1,320 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum TransactionSource {
+  MANUAL
+  SMS
+  NOTIFICATION
+  IMPORT
+}
+
+enum PaymentMethod {
+  DEBIT
+  CREDIT
+  PIX
+  BOLETO
+  OTHER
+}
+
+enum LoanType {
+  VEHICLE
+  MORTGAGE
+  PERSONAL
+  STORE_INSTALLMENT
+  CREDIT_CARD_INVOICE
+  OTHER
+}
+
+enum LoanOrigin {
+  MANUAL
+  SMS_DETECTED
+}
+
+enum AmortizationMethod {
+  PRICE // parcelas de valor fixo
+  SAC   // amortização constante, parcelas decrescentes
+}
+
+enum InstallmentStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum ReminderTargetType {
+  LOAN_INSTALLMENT
+  FIXED_EXPENSE
+}
+
+enum ReminderStatus {
+  PENDING
+  SENT
+}
+
+enum InvestmentType {
+  SAVINGS
+  CDB
+  STOCKS
+  FUNDS
+  TREASURY
+  CRYPTO
+  OTHER
+}
+
+// ─────────────────────────────────────────────
+// Core
+// ─────────────────────────────────────────────
+
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  smsConsentAt      DateTime?
+  smsConsentVersion String?
+  createdAt         DateTime  @default(now())
+
+  accounts     Account[]
+  creditCards  CreditCard[]
+  categories   Category[]
+  transactions Transaction[]
+  budgets      Budget[]
+  fixedRules   FixedExpenseRule[]
+  loans        Loan[]
+  reminders    PaymentReminder[]
+  investments  Investment[]
+  pushSubscriptions PushSubscription[]
+}
+
+model Account {
+  id           String   @id @default(uuid())
+  userId       String
+  name         String
+  institution  String?
+  type         String
+  balanceCents BigInt   @default(0)
+  createdAt    DateTime @default(now())
+
+  user         User          @relation(fields: [userId], references: [id])
+  transactions Transaction[]
+}
+
+model CreditCard {
+  id          String  @id @default(uuid())
+  userId      String
+  name        String
+  institution String?
+  limitCents  BigInt
+  closingDay  Int
+  dueDay      Int
+  colorHex    String?
+
+  user         User          @relation(fields: [userId], references: [id])
+  transactions Transaction[]
+}
+
+model Category {
+  id              String          @id @default(uuid())
+  userId          String
+  name            String
+  kind            TransactionType
+  isSystemDefault Boolean         @default(false)
+
+  user         User          @relation(fields: [userId], references: [id])
+  transactions Transaction[]
+  budgets      Budget[]
+}
+
+model FixedExpenseRule {
+  id                  String    @id @default(uuid())
+  userId              String
+  description         String
+  expectedAmountCents BigInt
+  dayOfMonth          Int
+  categoryId          String
+  lastPaidAt          DateTime?
+  nextExpectedDueDate DateTime?
+
+  user         User              @relation(fields: [userId], references: [id])
+  transactions Transaction[]
+  reminders    PaymentReminder[]
+}
+
+model Transaction {
+  id                String            @id @default(uuid())
+  userId            String
+  type              TransactionType
+  amountCents       BigInt
+  occurredAt        DateTime
+  accountId         String?
+  creditCardId      String?
+  categoryId        String
+  merchantName      String?
+  merchantCity      String?
+  merchantLat       Float?
+  merchantLng       Float?
+  source            TransactionSource @default(MANUAL)
+  sourceConfidence  Int?
+  isFixedExpense    Boolean           @default(false)
+  recurrenceId      String?
+  adjustmentOfId    String?
+  paymentMethod     PaymentMethod?
+  bankUsed          String?
+  cancelledAt       DateTime?
+  createdAt         DateTime          @default(now())
+
+  user            User              @relation(fields: [userId], references: [id])
+  account         Account?          @relation(fields: [accountId], references: [id])
+  creditCard      CreditCard?       @relation(fields: [creditCardId], references: [id])
+  category        Category          @relation(fields: [categoryId], references: [id])
+  fixedRule       FixedExpenseRule? @relation(fields: [recurrenceId], references: [id])
+  adjustmentOf    Transaction?      @relation("Adjustment", fields: [adjustmentOfId], references: [id])
+  adjustments     Transaction[]     @relation("Adjustment")
+  loanInstallment LoanInstallment?
+}
+
+model Budget {
+  id         String @id @default(uuid())
+  userId     String
+  categoryId String
+  monthRef   String // formato "2026-08"
+  limitCents BigInt
+
+  user     User     @relation(fields: [userId], references: [id])
+  category Category @relation(fields: [categoryId], references: [id])
+
+  @@unique([userId, categoryId, monthRef])
+}
+
+// ─────────────────────────────────────────────
+// Financiamentos, empréstimos, carnês e amortização
+// ─────────────────────────────────────────────
+
+model Loan {
+  id                  String             @id @default(uuid())
+  userId              String
+  description         String
+  institution         String?
+  type                LoanType
+  amortizationMethod  AmortizationMethod @default(PRICE)
+  totalAmountCents    BigInt
+  installmentsTotal   Int
+  installmentCents    BigInt
+  dueDay              Int
+  firstDueDate        DateTime
+  monthlyInterestRate Float?
+  origin              LoanOrigin         @default(MANUAL)
+  cancelledAt         DateTime?
+  accountId           String?
+  creditCardId        String?
+  createdAt           DateTime           @default(now())
+
+  user               User                @relation(fields: [userId], references: [id])
+  installments       LoanInstallment[]
+  amortizationEvents AmortizationEvent[]
+}
+
+model LoanInstallment {
+  id                      String            @id @default(uuid())
+  loanId                  String
+  number                  Int
+  dueDate                 DateTime
+  amountCents             BigInt
+  principalCents          BigInt
+  interestCents           BigInt
+  discountCents           BigInt            @default(0)
+  paidAmountCents         BigInt?
+  paidAt                  DateTime?
+  status                  InstallmentStatus @default(PENDING)
+  paymentMethod           PaymentMethod?
+  bankUsed                String?
+  merchantNameFromSms     String?
+  isManuallyAdjusted      Boolean           @default(false)
+  originalCalculatedCents BigInt?
+  adjustmentNote          String?
+  transactionId           String?           @unique
+
+  loan        Loan              @relation(fields: [loanId], references: [id])
+  transaction Transaction?      @relation(fields: [transactionId], references: [id])
+  reminders   PaymentReminder[]
+
+  @@unique([loanId, number])
+}
+
+model AmortizationEvent {
+  id                 String   @id @default(uuid())
+  loanId             String
+  installmentNumbers Int[]
+  paidAt             DateTime
+  totalPaidCents     BigInt
+  totalDiscountCents BigInt
+  createdAt          DateTime @default(now())
+
+  loan Loan @relation(fields: [loanId], references: [id])
+}
+
+// ─────────────────────────────────────────────
+// Avisos de vencimento
+// ─────────────────────────────────────────────
+
+model PaymentReminder {
+  id                String             @id @default(uuid())
+  userId            String
+  targetType        ReminderTargetType
+  loanInstallmentId String?
+  fixedExpenseId    String?
+  dueDate           DateTime
+  scheduledFor      DateTime
+  status            ReminderStatus     @default(PENDING)
+  sentAt            DateTime?
+
+  user            User              @relation(fields: [userId], references: [id])
+  loanInstallment LoanInstallment?  @relation(fields: [loanInstallmentId], references: [id])
+  fixedExpense    FixedExpenseRule? @relation(fields: [fixedExpenseId], references: [id])
+
+  @@index([scheduledFor, status])
+}
+
+// ─────────────────────────────────────────────
+// Investimentos
+// ─────────────────────────────────────────────
+
+model Investment {
+  id                String         @id @default(uuid())
+  userId            String
+  description       String
+  type              InvestmentType
+  institution       String
+  amountCents       BigInt
+  investedAt        DateTime
+  currentValueCents BigInt?
+  cancelledAt       DateTime?
+  createdAt         DateTime       @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
