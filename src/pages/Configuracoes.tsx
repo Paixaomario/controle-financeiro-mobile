@@ -89,7 +89,14 @@ export default function Configuracoes() {
     setSyncResult(null);
     try {
       const result = await api.post<{
-        results: Array<{ institutionName: string | null; status: string; message?: string; accountsFound: number; transactionsImported: number }>;
+        results: Array<{
+          institutionName: string | null;
+          status: string;
+          message?: string;
+          accountsFound: number;
+          transactionsImported: number;
+          insertError?: string | null;
+        }>;
       }>('/bank-connections/sync');
 
       const summary = result.results
@@ -97,6 +104,7 @@ export default function Configuracoes() {
           const label = r.institutionName || 'Conexão';
           if (r.status === 'UPDATING') return `${label}: ainda sincronizando no banco, tente de novo em instantes.`;
           if (r.accountsFound === 0) return `${label}: nenhuma conta encontrada (status: ${r.status}).`;
+          if (r.insertError) return `${label}: ${r.accountsFound} conta(s), erro ao salvar movimentações: ${r.insertError}`;
           return `${label}: ${r.accountsFound} conta(s), ${r.transactionsImported} movimentação(ões) importada(s).`;
         })
         .join(' ');

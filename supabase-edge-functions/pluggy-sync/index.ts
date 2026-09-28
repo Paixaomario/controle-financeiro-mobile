@@ -167,6 +167,7 @@ async function syncConnection(supabase: any, userId: string, connection: any, ap
 
   let institutionName: string | null = null;
   let transactionsImported = 0;
+  let lastInsertError: string | null = null;
 
   for (const pAccount of pluggyAccounts) {
     institutionName = pAccount.owner ?? institutionName;
@@ -236,7 +237,11 @@ async function syncConnection(supabase: any, userId: string, connection: any, ap
           },
           { onConflict: 'user_id,external_id' },
         );
-        if (!insertError) transactionsImported++;
+        if (!insertError) {
+          transactionsImported++;
+        } else if (!lastInsertError) {
+          lastInsertError = insertError.message;
+        }
       }
 
       hasMore = pluggyTxs.length === 200;
@@ -255,6 +260,7 @@ async function syncConnection(supabase: any, userId: string, connection: any, ap
     status: item.status,
     accountsFound: pluggyAccounts.length,
     transactionsImported,
+    insertError: lastInsertError,
   };
 }
 
