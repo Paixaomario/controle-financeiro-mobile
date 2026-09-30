@@ -94,6 +94,7 @@ export default function Configuracoes() {
           status: string;
           message?: string;
           accountsFound: number;
+          rawTransactionsFetched?: number;
           transactionsImported: number;
           insertError?: string | null;
         }>;
@@ -105,7 +106,8 @@ export default function Configuracoes() {
           if (r.status === 'UPDATING') return `${label}: ainda sincronizando no banco, tente de novo em instantes.`;
           if (r.accountsFound === 0) return `${label}: nenhuma conta encontrada (status: ${r.status}).`;
           if (r.insertError) return `${label}: ${r.accountsFound} conta(s), erro ao salvar movimentações: ${r.insertError}`;
-          return `${label}: ${r.accountsFound} conta(s), ${r.transactionsImported} movimentação(ões) importada(s).`;
+          if ((r.rawTransactionsFetched ?? 0) === 0) return `${label}: ${r.accountsFound} conta(s), 0 movimentações no extrato do banco.`;
+          return `${label}: ${r.accountsFound} conta(s), ${r.transactionsImported} de ${r.rawTransactionsFetched} movimentação(ões) importada(s).`;
         })
         .join(' ');
 

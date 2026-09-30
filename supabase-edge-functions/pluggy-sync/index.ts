@@ -6,7 +6,8 @@
 //   PLUGGY_CLIENT_ID, PLUGGY_CLIENT_SECRET
 //
 // action:
-//   add-connection → salva o Item ID de uma conta conectada no Meu Pluggy
+//   create-connect-token → gera o token para abrir o widget da Pluggy dentro do app
+//   add-connection → salva o Item ID de uma conta conectada (widget ou Meu Pluggy)
 //   sync           → busca contas + extrato de todas as conexões do usuário
 //   list           → lista as conexões já salvas
 
@@ -167,6 +168,7 @@ async function syncConnection(supabase: any, userId: string, connection: any, ap
 
   let institutionName: string | null = null;
   let transactionsImported = 0;
+  let rawTransactionsFetched = 0;
   let lastInsertError: string | null = null;
 
   for (const pAccount of pluggyAccounts) {
@@ -191,22 +193,30 @@ async function syncConnection(supabase: any, userId: string, connection: any, ap
 
     if (!localAccount) continue;
 
-    // busca as transações dos últimos 90 dias (ou desde a última sincronização, o que for mais recente)
+    // Na PRIMEIRA sincronização de uma conexão, busca sem filtro de data
+    // (pega todo o histórico que a Pluggy tiver — importante para dados de
+    // teste do sandbox, cujas datas não têm relação com "hoje"). Nas
+    // sincronizações seguintes, já com histórico existente, filtra a
+    // partir da última sincronização para não reprocessar tudo de novo.
     const from = connection.last_synced_at
       ? new Date(connection.last_synced_at).toISOString().slice(0, 10)
-      : new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
+      : null;
 
     let page = 1;
     let hasMore = true;
 
     while (hasMore) {
-      const txRes = await fetch(
-        `${PLUGGY_BASE_URL}/transactions?accountId=${pAccount.id}&from=${from}&pageSize=200&page=${page}`,
-        { headers: { 'X-API-KEY': apiKey } },
-      );
+      const url = new URL(`${PLUGGY_BASE_URL}/transactions`);
+      url.searchParams.set('accountId', pAccount.id);
+      url.searchParams.set('pageSize', '200');
+      url.searchParams.set('page', String(page));
+      if (from) url.searchParams.set('from', from);
+
+      const txRes = await fetch(url.toString(), { headers: { 'X-API-KEY': apiKey } });
       if (!txRes.ok) throw new Error(`Falha ao buscar extrato: ${txRes.status}`);
       const txData = await txRes.json();
       const pluggyTxs = txData.results ?? [];
+      rawTransactionsFetched += pluggyTxs.length;
 
       for (const tx of pluggyTxs) {
         const merchantName: string = tx.merchant?.name ?? tx.description ?? 'Transação';
@@ -259,6 +269,7 @@ async function syncConnection(supabase: any, userId: string, connection: any, ap
     institutionName,
     status: item.status,
     accountsFound: pluggyAccounts.length,
+    rawTransactionsFetched,
     transactionsImported,
     insertError: lastInsertError,
   };
